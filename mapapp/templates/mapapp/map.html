@@ -1,0 +1,228 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Mapa com Google Maps</title>
+    <script src="https://maps.googleapis.com/maps/api/js?key={{ api_key }}"></script>
+
+    <link rel="stylesheet" href="{% static "css/style.css" %}">
+
+
+
+    <style>
+        .selected {
+            background-color: yellow;
+        }
+    </style>
+
+    <script>
+    function initMap() {
+        var map = new google.maps.Map(document.getElementById('map'), {
+            zoom: 5,
+            center: { lat: -15.794229, lng: -47.882166 } // Centro aproximado do Brasil
+        });
+
+        var estacoes = [
+            {% for estacao in estacoes %}
+                {
+                    nome_entidade: "{{ estacao.nome_entidade }}",
+                    lat: {{ estacao.latitude }},
+                    lng: {{ estacao.longitude }},
+                    num_servico: "{{ estacao.num_servico }}",
+                    num_estacao: "{{ estacao.num_estacao }}",
+                    tecnologia: "{{ estacao.tecnologia }}",
+                    frequencia: "{{ estacao.frequencia }}",
+                    azimute: "{{ estacao.azimute }}",
+                    altura_antena: "{{ estacao.altura_antena }}"
+                },
+            {% endfor %}
+        ];
+
+        var mapMarkers = [];
+        var infowindows = [];
+        var selectedRows = new Set();
+
+        var userMarker = new google.maps.Marker({
+            position: { lat: -15.794229, lng: -47.882166 },
+            map: map,
+            title: 'User Marker',
+            draggable: true
+        });
+
+        google.maps.event.addListener(userMarker, 'dragend', function(event) {
+            updateMarkers(event.latLng.lat(), event.latLng.lng());
+        });
+
+        document.getElementById('add-marker').addEventListener('click', function() {
+            var lat = parseFloat(document.getElementById('latitude').value);
+            var lng = parseFloat(document.getElementById('longitude').value);
+            if (!isNaN(lat) && !isNaN(lng)) {
+                var newMarkerPosition = { lat: lat, lng: lng };
+                userMarker.setPosition(newMarkerPosition);
+                map.setCenter(newMarkerPosition);
+                updateMarkers(lat, lng);
+            } else {
+                alert('Por favor, insira coordenadas válidas');
+            }
+        });
+
+        function updateMarkers(lat, lng) {
+            // Limpar marcadores existentes no mapa
+            mapMarkers.forEach(function(markerObj) {
+                markerObj.marker.setMap(null);
+            });
+            mapMarkers = [];
+            infowindows = [];
+
+            // Calcular distância para todas as estações e ordenar por distância
+            var estacoesWithDistance = estacoes.map(function(estacao) {
+                var distance = haversine(lat, lng, estacao.lat, estacao.lng);
+                return { ...estacao, distance: distance };
+            });
+            estacoesWithDistance.sort(function(a, b) {
+                return a.distance - b.distance;
+            });
+
+            // Selecionar as 20 estações mais próximas
+            var closestEstacoes = estacoesWithDistance.slice(0, 20);
+
+            var bounds = new google.maps.LatLngBounds();
+
+            // Adicionar estações mais próximas ao mapa
+            closestEstacoes.forEach(function(estacao, index) {
+                var markerPosition = { lat: estacao.lat, lng: estacao.lng };
+                var mapMarker = new google.maps.Marker({
+                    position: markerPosition,
+                    map: map,
+                    title: estacao.nome_entidade
+                });
+
+                var infowindow = new google.maps.InfoWindow({
+                    content: '<div><strong>' + estacao.nome_entidade + '</strong><br>' +
+                             'Latitude: ' + estacao.lat + '<br>' +
+                             'Longitude: ' + estacao.lng + '<br>' +
+                             'Num Serviço: ' + estacao.num_servico + '<br>' +
+                             'Num Estação: ' + estacao.num_estacao + '<br>' +
+                             'Tecnologia: ' + estacao.tecnologia + '<br>' +
+                             'Frequência: ' + estacao.frequencia + '<br>' +
+                             'Azimute: ' + estacao.azimute + '<br>' +
+                             'Altura Antena: ' + estacao.altura_antena + '<br>' +
+                             'Distância: ' + estacao.distance.toFixed(2) + ' km</div>'
+                });
+
+                mapMarkers.push({ marker: mapMarker, infowindow: infowindow });
+                bounds.extend(mapMarker.position);
+            });
+
+            // Ajustar o zoom do mapa para mostrar todas as estações
+            if (closestEstacoes.length > 0) {
+                map.fitBounds(bounds);
+            }
+
+            // Exibir a tabela com as estações mais próximas
+            var tableBody = document.getElementById('estacoes-table-body');
+            tableBody.innerHTML = '';
+            closestEstacoes.forEach(function(estacao, index) {
+                var row = '<tr data-marker-index="' + index + '"><td>' + estacao.nome_entidade + '</td><td>' + estacao.lat + '</td><td>' + estacao.lng + '</td><td>' + estacao.distance.toFixed(2) + ' km</td></tr>';
+                tableBody.innerHTML += row;
+            });
+
+            // Adicionar evento de clique aos itens da tabela
+            var tableRows = document.querySelectorAll('#estacoes-table-body tr');
+            tableRows.forEach(function(row) {
+                row.addEventListener('click', function() {
+                    var markerIndex = parseInt(this.getAttribute('data-marker-index'));
+                    var mapMarker = mapMarkers[markerIndex].marker;
+                    var infowindow = mapMarkers[markerIndex].infowindow;
+
+                    // Verificar se a linha já está selecionada
+                    if (selectedRows.has(this)) {
+                        this.classList.remove('selected');
+                        selectedRows.delete(this);
+                        infowindow.close();
+                    } else {
+                        this.classList.add('selected');
+                        selectedRows.add(this);
+                        infowindow.open(map, mapMarker);
+                        map.setCenter(mapMarker.getPosition());
+                    }
+                });
+            });
+
+            if (closestEstacoes.length === 0) {
+                alert('Nenhuma estação encontrada.');
+            }
+        }
+
+        function haversine(lat1, lon1, lat2, lon2) {
+            // Converter de graus para radianos
+            lat1 = toRadians(lat1);
+            lon1 = toRadians(lon1);
+            lat2 = toRadians(lat2);
+            lon2 = toRadians(lon2);
+
+            // Fórmula de Haversine
+            var dlat = lat2 - lat1;
+            var dlon = lon2 - lon1;
+            var a = Math.sin(dlat / 2) * Math.sin(dlat / 2) +
+                    Math.cos(lat1) * Math.cos(lat2) *
+                    Math.sin(dlon / 2) * Math.sin(dlon / 2);
+            var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+            var r = 6371; // Raio da Terra em quilômetros
+            return c * r;
+        }
+
+        function toRadians(degrees) {
+            return degrees * (Math.PI / 180);
+        }
+    }
+    </script>
+</head>
+<body onload="initMap()">
+    <div class="divmapa">
+    <h1 class="textos">Cobertura Celular 2.0</h1>
+    </div>
+    <div class="divestacoes">
+    <h2 class="textos">Pesquisar Estações Próximas</h2>
+    </div>
+    <div class="container" >
+        <div class="container2">
+            <div>
+                <label  class="textos" for="latitude">Latitude:</label>
+            </div>
+                <input class="input" type="text" id="latitude" name="latitude">
+        </div>
+        <div class="container2">
+            <div>
+                <label class="textos" for="longitude">Longitude:</label>
+            </div>
+                <input class="input" type="text" id="longitude" name="longitude">
+        </div>
+        
+        <div class="divbotao">
+        <button class="submit" id="add-marker">Buscar Estações</button>
+        </div>
+    </div>
+    <div id="map" style="height: 500px; width: 100%;"></div>
+
+    <div class="divestacoes">
+    <h2 class="textos">Lista de Estações Próximas</h2>
+    </div>
+    <div class="filter">
+        <table border="1">
+            <thead>
+                <tr>
+                    <th>Nome Entidade</th>
+                    <th>Latitude</th>
+                    <th>Longitude</th>
+                    <th>Distância</th>
+                </tr>
+            </thead>
+            <tbody id="estacoes-table-body">
+                <!-- Linhas da tabela serão adicionadas dinamicamente aqui -->
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
